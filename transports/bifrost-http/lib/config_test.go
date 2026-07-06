@@ -18995,6 +18995,7 @@ func TestLoadConfig_NoConfigFile_FreshStart(t *testing.T) {
 // TestLoadConfig_NoConfigFile_ExistingDB tests LoadConfig with no config.json but existing DB from previous run
 func TestLoadConfig_NoConfigFile_ExistingDB(t *testing.T) {
 	initTestLogger()
+	clearAutoDetectProviderEnvVars(t)
 	tempDir := createTempDir(t)
 	ctx := context.Background()
 
