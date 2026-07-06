@@ -636,15 +636,16 @@ type ListModelsResponse struct {
 
 // ModelDetailsResponse represents a model with capability metadata.
 type ModelDetailsResponse struct {
-	Name                 string                `json:"name"`
-	Provider             string                `json:"provider"`
-	ContextLength        *int                  `json:"context_length,omitempty"`
-	MaxInputTokens       *int                  `json:"max_input_tokens,omitempty"`
-	MaxOutputTokens      *int                  `json:"max_output_tokens,omitempty"`
-	Architecture         *schemas.Architecture `json:"architecture,omitempty"`
-	IsDeprecated         bool                  `json:"is_deprecated,omitempty"`
-	AdditionalAttributes map[string]string     `json:"additional_attributes,omitempty"`
-	AccessibleByKeys     []string              `json:"accessible_by_keys,omitempty"`
+	Name                  string                `json:"name"`
+	Provider              string                `json:"provider"`
+	ContextLength         *int                  `json:"context_length,omitempty"`
+	MaxInputTokens        *int                  `json:"max_input_tokens,omitempty"`
+	MaxOutputTokens       *int                  `json:"max_output_tokens,omitempty"`
+	Architecture          *schemas.Architecture `json:"architecture,omitempty"`
+	SupportedRequestTypes []schemas.RequestType `json:"supported_request_types,omitempty"`
+	IsDeprecated          bool                  `json:"is_deprecated,omitempty"`
+	AdditionalAttributes  map[string]string     `json:"additional_attributes,omitempty"`
+	AccessibleByKeys      []string              `json:"accessible_by_keys,omitempty"`
 }
 
 // ListModelDetailsResponse represents the response for listing detailed models.
@@ -654,12 +655,13 @@ type ListModelDetailsResponse struct {
 }
 
 type modelListQuery struct {
-	Provider   schemas.ModelProvider
-	Query      string
-	KeyIDs     []string
-	Limit      int
-	Offset     int
-	Unfiltered bool
+	Provider    schemas.ModelProvider
+	Query       string
+	KeyIDs      []string
+	Limit       int
+	Offset      int
+	Unfiltered  bool
+	RequestType schemas.RequestType
 	// VK-based filtering: populated when a virtual key is found in request headers.
 	// HasVKFilter=true restricts providers/models to those allowed by the VK.
 	HasVKFilter       bool
@@ -719,6 +721,7 @@ func (h *ProviderHandler) listModels(ctx *fasthttp.RequestCtx) {
 //   - query: Filter models by name (case-insensitive partial match)
 //   - provider: Filter by specific provider name
 //   - keys: Comma-separated list of key IDs to filter models accessible by those keys
+//   - request_type: Filter models by a Bifrost request type such as chat_completion
 //   - unfiltered: If true, bypass provider-level model pool restrictions only
 //   - limit: Maximum number of results to return (default: 20)
 //   - offset: Number of results to skip (for pagination)
@@ -761,6 +764,7 @@ func (h *ProviderHandler) listModelDetails(ctx *fasthttp.RequestCtx) {
 			details.IsDeprecated = capabilities.IsDeprecated
 			details.AdditionalAttributes = capabilities.AdditionalAttributes
 		}
+		details.SupportedRequestTypes = modelCatalog.GetSupportedRequestTypes(model.Name)
 		responseModels = append(responseModels, details)
 	}
 
@@ -784,10 +788,11 @@ func (h *ProviderHandler) isModelDeprecated(model string, provider schemas.Model
 func (h *ProviderHandler) parseModelListQuery(ctx *fasthttp.RequestCtx, defaultLimit int) (modelListQuery, bool) {
 	queryArgs := ctx.QueryArgs()
 	query := modelListQuery{
-		Provider:   schemas.ModelProvider(string(queryArgs.Peek("provider"))),
-		Query:      string(queryArgs.Peek("query")),
-		Limit:      defaultLimit,
-		Unfiltered: string(queryArgs.Peek("unfiltered")) == "true",
+		Provider:    schemas.ModelProvider(string(queryArgs.Peek("provider"))),
+		Query:       string(queryArgs.Peek("query")),
+		Limit:       defaultLimit,
+		Unfiltered:  string(queryArgs.Peek("unfiltered")) == "true",
+		RequestType: schemas.RequestType(string(queryArgs.Peek("request_type"))),
 	}
 
 	if keysRaw := queryArgs.Peek("keys"); len(keysRaw) > 0 {
@@ -868,6 +873,18 @@ func (h *ProviderHandler) listManagementModels(query modelListQuery) ([]listedMo
 	models := make([]listedModel, 0)
 	for _, provider := range providers {
 		models = append(models, h.listManagementModelsForProvider(provider, query)...)
+	}
+	models = slices.DeleteFunc(models, func(model listedModel) bool {
+		return h.isModelDeprecated(model.Name, model.Provider)
+	})
+	if query.RequestType != "" {
+		modelCatalog := h.inMemoryStore.ModelCatalog
+		if modelCatalog == nil {
+			return nil, 0, fmt.Errorf("model catalog not available")
+		}
+		models = slices.DeleteFunc(models, func(model listedModel) bool {
+			return !modelCatalog.IsRequestTypeSupported(model.Name, model.Provider, query.RequestType)
+		})
 	}
 
 	total := len(models)

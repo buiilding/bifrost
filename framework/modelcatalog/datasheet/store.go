@@ -321,6 +321,27 @@ func (s *Store) IsRequestTypeSupported(model string, requestType schemas.Request
 	return ok && slices.Contains(outputs, string(requestType))
 }
 
+// GetSupportedRequestTypes returns the request types a model declares through
+// the model-parameters datasheet. Unknown models return nil.
+func (s *Store) GetSupportedRequestTypes(model string) []schemas.RequestType {
+	s.mu.RLock()
+	outputs, ok := s.supportedResponseTypes[model]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+
+	values := make([]string, len(outputs))
+	copy(values, outputs)
+	slices.Sort(values)
+
+	requestTypes := make([]schemas.RequestType, 0, len(values))
+	for _, value := range values {
+		requestTypes = append(requestTypes, schemas.RequestType(value))
+	}
+	return requestTypes
+}
+
 // GetSupportedParameters returns the list of OpenAI-compatible parameter
 // names a model accepts (e.g. temperature, top_p, tools). nil for unknown.
 func (s *Store) GetSupportedParameters(model string) []string {

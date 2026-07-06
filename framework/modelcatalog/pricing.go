@@ -23,6 +23,12 @@ func (mc *ModelCatalog) IsRequestTypeSupported(model string, provider schemas.Mo
 	return mc.datasheet.IsRequestTypeSupported(model, requestType)
 }
 
+// GetSupportedRequestTypes returns the request types a model declares through
+// the model-parameters datasheet.
+func (mc *ModelCatalog) GetSupportedRequestTypes(model string) []schemas.RequestType {
+	return mc.datasheet.GetSupportedRequestTypes(model)
+}
+
 func (mc *ModelCatalog) GetSupportedParameters(model string) []string {
 	return mc.datasheet.GetSupportedParameters(model)
 }

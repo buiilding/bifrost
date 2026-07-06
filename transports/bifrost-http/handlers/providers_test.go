@@ -361,6 +361,19 @@ func modelCatalogForPricingJSON(t *testing.T, pricingJSON []byte) *modelcatalog.
 	return modelcatalog.NewTestCatalogWithDatasheet(ds)
 }
 
+func modelCatalogForModelParametersJSON(t *testing.T, paramsJSON []byte) *modelcatalog.ModelCatalog {
+	t.Helper()
+	paramsPath := filepath.Join(t.TempDir(), "model-parameters.json")
+	if err := os.WriteFile(paramsPath, paramsJSON, 0o600); err != nil {
+		t.Fatalf("write model parameters testdata: %v", err)
+	}
+	ds := datasheet.New(nil, nil, datasheet.Config{ModelParametersURL: "file://" + paramsPath})
+	if err := ds.LoadModelParamsFromURLIntoMemory(t.Context()); err != nil {
+		t.Fatalf("load model parameters testdata: %v", err)
+	}
+	return modelcatalog.NewTestCatalogWithDatasheet(ds)
+}
+
 func TestListModels_UnknownKeysDoNotFilter(t *testing.T) {
 	SetLogger(&mockLogger{})
 
@@ -719,6 +732,76 @@ func TestListModelDetails_UnknownKeysDoNotFilter(t *testing.T) {
 
 	if resp.Total != 2 || len(resp.Models) != 2 {
 		t.Fatalf("expected all models when keys are unknown, got %#v", resp.Models)
+	}
+}
+
+func TestListModelDetails_FiltersByRequestType(t *testing.T) {
+	SetLogger(&mockLogger{})
+
+	h := providerHandlerForTest(
+		schemas.OpenAI,
+		[]schemas.Key{{ID: "key-a"}},
+		[]string{"gpt-4o", "text-embedding-3-small", "unknown-model"},
+		[]string{"gpt-4o", "text-embedding-3-small", "unknown-model"},
+	)
+	h.inMemoryStore.ModelCatalog = modelCatalogForModelParametersJSON(t, []byte(`{
+		"gpt-4o": {
+			"mode": "chat",
+			"supported_endpoints": ["/v1/chat/completions", "/v1/responses"]
+		},
+		"text-embedding-3-small": {
+			"supported_endpoints": ["/v1/embeddings"]
+		}
+	}`))
+
+	ctx := &fasthttp.RequestCtx{}
+	ctx.Request.Header.SetMethod("GET")
+	ctx.Request.SetRequestURI("/api/models/details?provider=openai&request_type=chat_completion&limit=10")
+
+	h.listModelDetails(ctx)
+
+	if ctx.Response.StatusCode() != fasthttp.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", ctx.Response.StatusCode(), string(ctx.Response.Body()))
+	}
+
+	var resp ListModelDetailsResponse
+	if err := json.Unmarshal(ctx.Response.Body(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+
+	if resp.Total != 1 || len(resp.Models) != 1 {
+		t.Fatalf("expected only the chat-capable model, got %#v", resp.Models)
+	}
+	if resp.Models[0].Name != "gpt-4o" {
+		t.Fatalf("expected gpt-4o, got %s", resp.Models[0].Name)
+	}
+	if !slices.Contains(resp.Models[0].SupportedRequestTypes, schemas.ChatCompletionRequest) {
+		t.Fatalf("expected supported request types to include chat_completion, got %#v", resp.Models[0].SupportedRequestTypes)
+	}
+}
+
+func TestFilterListModelsResponseByRequestType(t *testing.T) {
+	catalog := modelCatalogForModelParametersJSON(t, []byte(`{
+		"gpt-4o": {
+			"mode": "chat",
+			"supported_endpoints": ["/v1/chat/completions"]
+		},
+		"text-embedding-3-small": {
+			"supported_endpoints": ["/v1/embeddings"]
+		}
+	}`))
+	resp := &schemas.BifrostListModelsResponse{
+		Data: []schemas.Model{
+			{ID: "openai/gpt-4o"},
+			{ID: "openai/text-embedding-3-small"},
+			{ID: "openai/unknown-model"},
+		},
+	}
+
+	filterListModelsResponseByRequestType(resp, catalog, schemas.ChatCompletionRequest)
+
+	if len(resp.Data) != 1 || resp.Data[0].ID != "openai/gpt-4o" {
+		t.Fatalf("expected only chat-capable model, got %#v", resp.Data)
 	}
 }
 

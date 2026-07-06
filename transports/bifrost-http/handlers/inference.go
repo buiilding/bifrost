@@ -813,6 +813,11 @@ func (h *CompletionHandler) RegisterRoutes(r *router.Router, middlewares ...sche
 func (h *CompletionHandler) listModels(ctx *fasthttp.RequestCtx) {
 	// Get provider from query parameters
 	provider := string(ctx.QueryArgs().Peek("provider"))
+	requestType := schemas.RequestType(string(ctx.QueryArgs().Peek("request_type")))
+	if requestType != "" && h.config.ModelCatalog == nil {
+		SendError(ctx, fasthttp.StatusInternalServerError, "model catalog not available")
+		return
+	}
 
 	// Convert context
 	bifrostCtx, cancel := lib.ConvertToBifrostContext(ctx, h.config)
@@ -846,7 +851,7 @@ func (h *CompletionHandler) listModels(ctx *fasthttp.RequestCtx) {
 	extraParams := map[string]interface{}{}
 	for k, v := range ctx.QueryArgs().All() {
 		s := string(k)
-		if s != "provider" && s != "page_size" && s != "page_token" {
+		if s != "provider" && s != "page_size" && s != "page_token" && s != "request_type" {
 			extraParams[s] = string(v)
 		}
 	}
@@ -872,6 +877,7 @@ func (h *CompletionHandler) listModels(ctx *fasthttp.RequestCtx) {
 	}
 
 	enrichListModelsResponse(resp, h.config.ModelCatalog)
+	filterListModelsResponseByRequestType(resp, h.config.ModelCatalog, requestType)
 	if resp != nil && resp.ExtraFields.ProviderResponseHeaders != nil {
 		forwardProviderHeaders(ctx, resp.ExtraFields.ProviderResponseHeaders)
 	}
@@ -942,6 +948,21 @@ func enrichListModelsResponse(resp *schemas.BifrostListModelsResponse, catalog *
 		}
 		resp.Data[i] = modelEntry
 	}
+}
+
+func filterListModelsResponseByRequestType(resp *schemas.BifrostListModelsResponse, catalog *modelcatalog.ModelCatalog, requestType schemas.RequestType) {
+	if resp == nil || len(resp.Data) == 0 || catalog == nil || requestType == "" {
+		return
+	}
+
+	models := resp.Data[:0]
+	for _, modelEntry := range resp.Data {
+		provider, modelName := schemas.ParseModelString(modelEntry.ID, "")
+		if catalog.IsRequestTypeSupported(modelName, provider, requestType) {
+			models = append(models, modelEntry)
+		}
+	}
+	resp.Data = models
 }
 
 // prepareTextCompletionRequest prepares a BifrostTextCompletionRequest from the HTTP request body
