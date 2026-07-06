@@ -18861,6 +18861,102 @@ func assertDefaultClientConfigValues(t *testing.T, cc configstore.ClientConfig) 
 	require.Equal(t, false, cc.HideDeletedVirtualKeysInFilters, "HideDeletedVirtualKeysInFilters should default to false")
 }
 
+func clearAutoDetectProviderEnvVars(t *testing.T) {
+	t.Helper()
+
+	for _, envVars := range autoDetectProviderEnvVars() {
+		for _, envVar := range envVars {
+			t.Setenv(envVar, "")
+		}
+	}
+}
+
+func TestAutoDetectProviders_DetectsAPIKeyProviders(t *testing.T) {
+	initTestLogger()
+	clearAutoDetectProviderEnvVars(t)
+
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
+	t.Setenv("CEREBRAS_API_KEY", "cerebras-test-key")
+	t.Setenv("COHERE_API_KEY", "cohere-test-key")
+	t.Setenv("ELEVENLABS_API_KEY", "elevenlabs-test-key")
+	t.Setenv("FIREWORKS_API_KEY", "fireworks-test-key")
+	t.Setenv("GEMINI_API_KEY", "gemini-test-key")
+	t.Setenv("GROQ_API_KEY", "groq-test-key")
+	t.Setenv("HUGGINGFACE_API_KEY", "huggingface-test-key")
+	t.Setenv("MISTRAL_API_KEY", "mistral-test-key")
+	t.Setenv("NEBIUS_API_KEY", "nebius-test-key")
+	t.Setenv("OPENAI_API_KEY", "openai-test-key")
+	t.Setenv("OPENROUTER_API_KEY", "openrouter-test-key")
+	t.Setenv("PARASAIL_API_KEY", "parasail-test-key")
+	t.Setenv("PERPLEXITY_API_KEY", "perplexity-test-key")
+	t.Setenv("REPLICATE_API_TOKEN", "replicate-test-key")
+	t.Setenv("RUNWARE_API_KEY", "runware-test-key")
+	t.Setenv("RUNWAY_API_KEY", "runway-test-key")
+	t.Setenv("XAI_API_KEY", "xai-test-key")
+
+	config := &Config{}
+	providers := map[schemas.ModelProvider]configstore.ProviderConfig{}
+
+	config.autoDetectProviders(providers)
+
+	requireAutoDetectedProvider(t, providers, schemas.Anthropic, "ANTHROPIC_API_KEY", "anthropic-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Cerebras, "CEREBRAS_API_KEY", "cerebras-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Cohere, "COHERE_API_KEY", "cohere-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Elevenlabs, "ELEVENLABS_API_KEY", "elevenlabs-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Fireworks, "FIREWORKS_API_KEY", "fireworks-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Gemini, "GEMINI_API_KEY", "gemini-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Groq, "GROQ_API_KEY", "groq-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.HuggingFace, "HUGGINGFACE_API_KEY", "huggingface-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Mistral, "MISTRAL_API_KEY", "mistral-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Nebius, "NEBIUS_API_KEY", "nebius-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.OpenAI, "OPENAI_API_KEY", "openai-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.OpenRouter, "OPENROUTER_API_KEY", "openrouter-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Parasail, "PARASAIL_API_KEY", "parasail-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Perplexity, "PERPLEXITY_API_KEY", "perplexity-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Replicate, "REPLICATE_API_TOKEN", "replicate-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Runware, "RUNWARE_API_KEY", "runware-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.Runway, "RUNWAY_API_KEY", "runway-test-key")
+	requireAutoDetectedProvider(t, providers, schemas.XAI, "XAI_API_KEY", "xai-test-key")
+}
+
+func TestAutoDetectProviders_PreservesExistingProviderConfig(t *testing.T) {
+	initTestLogger()
+	clearAutoDetectProviderEnvVars(t)
+
+	t.Setenv("OPENAI_API_KEY", "env-openai-key")
+	t.Setenv("GROQ_API_KEY", "env-groq-key")
+
+	existingOpenAI := makeProviderConfig("manual-openai-key", "manual-openai-secret")
+	config := &Config{}
+	providers := map[schemas.ModelProvider]configstore.ProviderConfig{
+		schemas.OpenAI: existingOpenAI,
+	}
+
+	config.autoDetectProviders(providers)
+
+	require.Equal(t, existingOpenAI.Keys[0].Name, providers[schemas.OpenAI].Keys[0].Name)
+	require.Equal(t, existingOpenAI.Keys[0].Value.GetValue(), providers[schemas.OpenAI].Keys[0].Value.GetValue())
+	requireAutoDetectedProvider(t, providers, schemas.Groq, "GROQ_API_KEY", "env-groq-key")
+}
+
+func requireAutoDetectedProvider(t *testing.T, providers map[schemas.ModelProvider]configstore.ProviderConfig, provider schemas.ModelProvider, envVar string, resolvedValue string) {
+	t.Helper()
+
+	providerConfig, exists := providers[provider]
+	require.True(t, exists, "%s should be auto-detected", provider)
+	require.Len(t, providerConfig.Keys, 1)
+
+	key := providerConfig.Keys[0]
+	require.Equal(t, envVar+"_auto_detected", key.Name)
+	require.Equal(t, schemas.WhiteList{"*"}, key.Models)
+	require.Equal(t, 1.0, key.Weight)
+	require.True(t, key.Value.IsFromEnv(), "auto-detected key should be stored as an env secret reference")
+	require.Equal(t, envVar, key.Value.EnvKey())
+	require.Equal(t, "env."+envVar, key.Value.GetRawRef())
+	require.Equal(t, resolvedValue, key.Value.GetValue())
+	require.Equal(t, &schemas.DefaultConcurrencyAndBufferSize, providerConfig.ConcurrencyAndBufferSize)
+}
+
 // TestLoadConfig_NoConfigFile_FreshStart tests LoadConfig with no config.json and no existing DB
 func TestLoadConfig_NoConfigFile_FreshStart(t *testing.T) {
 	initTestLogger()
@@ -19258,12 +19354,7 @@ func TestLoadConfig_NoConfigFile_SecondRun(t *testing.T) {
 	ctx := context.Background()
 
 	// Clear auto-detect environment variables to ensure deterministic test behavior
-	autoDetectEnvVars := []string{"OPENAI_API_KEY", "OPENAI_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_KEY", "MISTRAL_API_KEY", "MISTRAL_KEY"}
-	for _, envVar := range autoDetectEnvVars {
-		if orig := os.Getenv(envVar); orig != "" {
-			t.Setenv(envVar, "")
-		}
-	}
+	clearAutoDetectProviderEnvVars(t)
 
 	// First run: no config.json -> auto-detect and create defaults
 	config1, err := LoadConfig(ctx, tempDir)
@@ -19291,6 +19382,42 @@ func TestLoadConfig_NoConfigFile_SecondRun(t *testing.T) {
 	require.NoError(t, err)
 	_, hasOpenAI := dbProviders[schemas.OpenAI]
 	require.True(t, hasOpenAI, "Provider added via dashboard should be preserved in DB")
+}
+
+func TestLoadConfig_NoConfigFile_SecondRun_MergesEnvDetectedProvider(t *testing.T) {
+	initTestLogger()
+	tempDir := createTempDir(t)
+	ctx := context.Background()
+	clearAutoDetectProviderEnvVars(t)
+
+	config1, err := LoadConfig(ctx, tempDir)
+	require.NoError(t, err)
+	require.NotNil(t, config1)
+
+	manualOpenAI := configstore.ProviderConfig{
+		Keys: []schemas.Key{
+			{ID: uuid.NewString(), Name: "manual-openai-key", Value: *schemas.NewSecretVar("sk-manual-openai"), Weight: 1},
+		},
+	}
+	err = config1.ConfigStore.AddProvider(ctx, schemas.OpenAI, manualOpenAI)
+	require.NoError(t, err)
+	config1.Close(ctx)
+
+	t.Setenv("GROQ_API_KEY", "env-groq-key")
+
+	config2, err := LoadConfig(ctx, tempDir)
+	require.NoError(t, err)
+	require.NotNil(t, config2)
+	defer config2.Close(ctx)
+
+	require.Contains(t, config2.Providers, schemas.OpenAI, "manual provider should be preserved")
+	require.Equal(t, "manual-openai-key", config2.Providers[schemas.OpenAI].Keys[0].Name)
+	requireAutoDetectedProvider(t, config2.Providers, schemas.Groq, "GROQ_API_KEY", "env-groq-key")
+
+	dbProviders, err := config2.ConfigStore.GetProvidersConfig(ctx)
+	require.NoError(t, err)
+	require.Contains(t, dbProviders, schemas.OpenAI)
+	require.Contains(t, dbProviders, schemas.Groq)
 }
 
 // TestLoadConfig_PartialConfigFile_WithExistingDB tests partial config.json update with existing DB

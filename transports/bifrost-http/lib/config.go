@@ -884,7 +884,7 @@ func LoadConfig(ctx context.Context, configDirPath string) (*Config, error) {
 		return nil, err
 	}
 	config.SetHeaderMatcher(NewHeaderMatcher(config.ClientConfig.HeaderFilterConfig))
-	// 5. Providers (store → file → auto-detect)
+	// 5. Providers (store → file → env auto-detect)
 	if err := loadProviders(ctx, config, &configData); err != nil {
 		return nil, err
 	}
@@ -1289,10 +1289,13 @@ func loadProviders(ctx context.Context, config *Config, configData *ConfigData) 
 					logger.Warn("failed to process provider %s: %v", providerName, err)
 				}
 			}
-		} else if len(providersInConfigStore) == 0 && (!configData.isConfigJSONSourceOfTruth() || providersSectionPresent) {
-			// No providers in file and none in DB — auto-detect from environment
-			config.autoDetectProviders(ctx)
-			maps.Copy(providersInConfigStore, config.Providers)
+		}
+		if !providersSectionPresent {
+			// Environment variables are a convenience layer over explicit provider
+			// config. They only add missing providers and never overwrite provider
+			// rows loaded from the DB. A config.json providers section remains
+			// explicit and is not expanded by ambient process environment.
+			config.autoDetectProviders(providersInConfigStore)
 		}
 	}
 	// Update store and config
@@ -6068,30 +6071,32 @@ func (c *Config) GetOAuth2SigningKey(ctx context.Context) (*configstoreTables.OA
 	return k, nil
 }
 
-// autoDetectProviders automatically detects common environment variables and sets up providers
-// when no configuration file exists. This enables zero-config startup when users have set
-// standard environment variables like OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.
+// autoDetectProviders automatically detects common environment variables and
+// sets up providers that are not already configured. This enables zero-config
+// startup when users have set standard environment variables like
+// OPENAI_API_KEY, ANTHROPIC_API_KEY, etc., while preserving providers managed
+// through config.json or the dashboard.
 //
-// Supported environment variables:
-//   - OpenAI: OPENAI_API_KEY, OPENAI_KEY
-//   - Anthropic: ANTHROPIC_API_KEY, ANTHROPIC_KEY
-//   - Mistral: MISTRAL_API_KEY, MISTRAL_KEY
+// The detector intentionally covers API-key-only providers. Providers that
+// require structured key config or endpoint URLs, such as Azure, Bedrock,
+// Vertex, Ollama, vLLM, and SGL, must still be configured explicitly.
 //
 // For each detected provider, it creates a default configuration with:
-//   - The detected API key with weight 1.0
-//   - Empty models list (provider will use default models)
+//   - An env.KEY_NAME secret reference with weight 1.0
+//   - A wildcard model list
 //   - Default concurrency and buffer size settings
-func (c *Config) autoDetectProviders(ctx context.Context) {
-	// Define common environment variable patterns for each provider
-	providerEnvVars := map[schemas.ModelProvider][]string{
-		schemas.OpenAI:    {"OPENAI_API_KEY", "OPENAI_KEY"},
-		schemas.Anthropic: {"ANTHROPIC_API_KEY", "ANTHROPIC_KEY"},
-		schemas.Mistral:   {"MISTRAL_API_KEY", "MISTRAL_KEY"},
+func (c *Config) autoDetectProviders(providers map[schemas.ModelProvider]configstore.ProviderConfig) {
+	if providers == nil {
+		return
 	}
 
 	detectedCount := 0
 
-	for provider, envVars := range providerEnvVars {
+	for provider, envVars := range autoDetectProviderEnvVars() {
+		if _, exists := providers[provider]; exists {
+			continue
+		}
+
 		for _, envVar := range envVars {
 			if os.Getenv(envVar) != "" {
 				// Generate a unique ID for the auto-detected key
@@ -6110,7 +6115,7 @@ func (c *Config) autoDetectProviders(ctx context.Context) {
 					ConcurrencyAndBufferSize: &schemas.DefaultConcurrencyAndBufferSize,
 				}
 				// Add to providers map
-				c.Providers[provider] = providerConfig
+				providers[provider] = providerConfig
 				logger.Info("auto-detected %s provider from environment variable %s", provider, envVar)
 				detectedCount++
 				break // Only use the first found env var for each provider
@@ -6119,11 +6124,37 @@ func (c *Config) autoDetectProviders(ctx context.Context) {
 	}
 	if detectedCount > 0 {
 		logger.Info("auto-configured %d provider(s) from environment variables", detectedCount)
-		if c.ConfigStore != nil {
-			if err := c.ConfigStore.UpdateProvidersConfig(ctx, c.Providers); err != nil {
-				logger.Error("failed to update providers in store: %v", err)
-			}
-		}
+	}
+}
+
+// autoDetectProviderEnvVars returns the supported API-key-only provider env
+// variable names. The first env var set for a provider wins, so provider-
+// specific names are listed before broader aliases.
+func autoDetectProviderEnvVars() map[schemas.ModelProvider][]string {
+	return map[schemas.ModelProvider][]string{
+		schemas.Anthropic:  {"ANTHROPIC_API_KEY", "ANTHROPIC_KEY"},
+		schemas.Cerebras:   {"CEREBRAS_API_KEY"},
+		schemas.Cohere:     {"COHERE_API_KEY"},
+		schemas.Elevenlabs: {"ELEVENLABS_API_KEY", "ELEVENLABS_KEY", "ELEVEN_LABS_API_KEY"},
+		schemas.Fireworks:  {"FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY"},
+		schemas.Gemini:     {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
+		schemas.Groq:       {"GROQ_API_KEY"},
+		schemas.HuggingFace: {
+			"HUGGINGFACE_API_KEY",
+			"HUGGING_FACE_API_KEY",
+			"HF_TOKEN",
+			"HUGGINGFACEHUB_API_TOKEN",
+		},
+		schemas.Mistral:    {"MISTRAL_API_KEY", "MISTRAL_KEY"},
+		schemas.Nebius:     {"NEBIUS_API_KEY"},
+		schemas.OpenAI:     {"OPENAI_API_KEY", "OPENAI_KEY"},
+		schemas.OpenRouter: {"OPENROUTER_API_KEY"},
+		schemas.Parasail:   {"PARASAIL_API_KEY"},
+		schemas.Perplexity: {"PERPLEXITY_API_KEY", "PPLX_API_KEY"},
+		schemas.Replicate:  {"REPLICATE_API_TOKEN", "REPLICATE_API_KEY"},
+		schemas.Runware:    {"RUNWARE_API_KEY"},
+		schemas.Runway:     {"RUNWAY_API_KEY", "RUNWAYML_API_SECRET"},
+		schemas.XAI:        {"XAI_API_KEY", "GROK_API_KEY"},
 	}
 }
 

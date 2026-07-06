@@ -10,7 +10,7 @@
 // Configuration is handled through a JSON config file, high-performance ConfigStore, and environment variables:
 //   - Use -app-dir flag to specify the application data directory (contains config.json and logs)
 //   - Use -port flag to specify the server port (default: 8080)
-//   - When no config file exists, common environment variables are auto-detected (OPENAI_API_KEY, ANTHROPIC_API_KEY, MISTRAL_API_KEY)
+//   - When no providers are explicitly configured, common API-key provider environment variables are auto-detected
 //
 // ConfigStore Features:
 //   - Pure in-memory storage for ultra-fast config access
