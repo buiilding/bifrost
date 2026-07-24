@@ -93,6 +93,24 @@ type ListProvidersResponse struct {
 	Total     int                `json:"total"`
 }
 
+// ProviderCatalogEntry is the provider-selection shape used by local clients.
+// Unlike ListProvidersResponse, this catalog includes every built-in provider,
+// including providers that have not been configured yet. Configured custom
+// providers are included as well.
+type ProviderCatalogEntry struct {
+	Name           schemas.ModelProvider `json:"name"`
+	DisplayName    string                `json:"display_name"`
+	Configured     bool                  `json:"configured"`
+	KeyCount       int                   `json:"key_count"`
+	Authentication string                `json:"authentication"`
+	Configuration  string                `json:"configuration"`
+}
+
+type ProviderCatalogResponse struct {
+	Providers []ProviderCatalogEntry `json:"providers"`
+	Total     int                    `json:"total"`
+}
+
 // ErrorResponse represents an error response
 type ErrorResponse struct {
 	Error   string `json:"error"`
@@ -126,6 +144,7 @@ type providerUpdatePayload struct {
 func (h *ProviderHandler) RegisterRoutes(r *router.Router, middlewares ...schemas.BifrostHTTPMiddleware) {
 	// Provider CRUD operations
 	r.GET("/api/providers", lib.ChainMiddlewares(h.listProviders, middlewares...))
+	r.GET("/api/providers/catalog", lib.ChainMiddlewares(h.listProviderCatalog, middlewares...))
 	r.GET("/api/providers/{provider}", lib.ChainMiddlewares(h.getProvider, middlewares...))
 	r.GET("/api/providers/{provider}/keys", lib.ChainMiddlewares(h.listProviderKeys, middlewares...))
 	r.GET("/api/providers/{provider}/keys/{key_id}", lib.ChainMiddlewares(h.getProviderKey, middlewares...))
@@ -141,6 +160,91 @@ func (h *ProviderHandler) RegisterRoutes(r *router.Router, middlewares ...schema
 	r.GET("/api/models/parameters", lib.ChainMiddlewares(h.getModelParameters, middlewares...))
 	r.GET("/api/models/base", lib.ChainMiddlewares(h.listBaseModels, middlewares...))
 	r.PUT("/api/models/catalog", lib.ChainMiddlewares(h.upsertModelCatalogEntries, middlewares...))
+}
+
+// listProviderCatalog returns the complete built-in provider catalog plus any
+// configured custom providers. Provider configuration and key values remain
+// owned by the existing provider endpoints; this response only exposes safe
+// selection metadata.
+func (h *ProviderHandler) listProviderCatalog(ctx *fasthttp.RequestCtx) {
+	providers := make(map[schemas.ModelProvider]configstore.ProviderConfig)
+	if h.dbStore != nil {
+		var err error
+		providers, err = h.dbStore.GetProvidersConfig(ctx)
+		if err != nil {
+			SendError(ctx, fasthttp.StatusInternalServerError, fmt.Sprintf("Failed to get providers: %v", err))
+			return
+		}
+	} else {
+		h.inMemoryStore.Mu.RLock()
+		for name, provider := range h.inMemoryStore.Providers {
+			providers[name] = provider
+		}
+		h.inMemoryStore.Mu.RUnlock()
+	}
+
+	allNames := make(map[schemas.ModelProvider]struct{}, len(schemas.StandardProviders)+len(providers))
+	for _, provider := range schemas.StandardProviders {
+		allNames[provider] = struct{}{}
+	}
+	for provider := range providers {
+		allNames[provider] = struct{}{}
+	}
+
+	entries := make([]ProviderCatalogEntry, 0, len(allNames))
+	for provider := range allNames {
+		config, configured := providers[provider]
+		entry := ProviderCatalogEntry{
+			Name:           provider,
+			DisplayName:    providerDisplayName(provider),
+			Configured:     configured,
+			Authentication: providerAuthentication(provider, config),
+			Configuration:  providerConfiguration(provider, config),
+		}
+		if configured {
+			entry.KeyCount = len(config.Keys)
+		}
+		entries = append(entries, entry)
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].DisplayName < entries[j].DisplayName
+	})
+	SendJSON(ctx, ProviderCatalogResponse{Providers: entries, Total: len(entries)})
+}
+
+func providerDisplayName(provider schemas.ModelProvider) string {
+	words := strings.FieldsFunc(string(provider), func(r rune) bool { return r == '-' || r == '_' })
+	for index, word := range words {
+		if word == "ai" || word == "AI" {
+			words[index] = "AI"
+			continue
+		}
+		if word != "" {
+			words[index] = strings.ToUpper(word[:1]) + word[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+func providerAuthentication(provider schemas.ModelProvider, config configstore.ProviderConfig) string {
+	if config.CustomProviderConfig != nil && config.CustomProviderConfig.IsKeyLess {
+		return "none"
+	}
+	if provider == schemas.Ollama || provider == schemas.SGL || provider == schemas.VLLM {
+		return "optional"
+	}
+	return "api_key"
+}
+
+func providerConfiguration(provider schemas.ModelProvider, config configstore.ProviderConfig) string {
+	if provider == schemas.Azure || provider == schemas.Bedrock || provider == schemas.BedrockMantle || provider == schemas.Vertex || provider == schemas.VLLM || provider == schemas.Ollama || provider == schemas.SGL {
+		return "structured"
+	}
+	if config.CustomProviderConfig != nil {
+		return "structured"
+	}
+	return "simple"
 }
 
 // listProviders handles GET /api/providers - List all providers
