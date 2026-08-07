@@ -1,0 +1,113 @@
+---
+title: "Kimi Code"
+description: "Kimi Code provider guide for OpenAI-compatible chat, streaming, model listing, and tool use"
+icon: "code"
+---
+
+## Overview
+
+Kimi Code provides an OpenAI-compatible API for coding models. Bifrost exposes it
+as a native provider, so users can configure an API key without creating a
+custom provider.
+
+### Supported Operations
+
+| Operation | Non-Streaming | Streaming | Upstream behavior |
+|-----------|---------------|-----------|-------------------|
+| Chat Completions | ✅ | ✅ | `/v1/chat/completions` |
+| Responses API | ✅ | ✅ | Converted to Chat Completions |
+| List Models | ✅ | - | `/v1/models` |
+| Count Tokens | ❌ | - | Not provided by Kimi Code |
+| Embeddings | ❌ | ❌ | - |
+| Image Generation | ❌ | ❌ | - |
+| Speech and Transcription | ❌ | ❌ | - |
+
+<Note>
+The Responses API is a Bifrost compatibility layer for Kimi Code. Bifrost
+converts the request to Chat Completions and converts the result back to the
+Responses shape. Kimi Code does not receive a native Responses request.
+</Note>
+
+## Setup & Configuration
+
+Configure Kimi Code in the same way as other built-in providers.
+
+<Tabs>
+<Tab title="Web UI">
+
+1. Navigate to **Models** > **Model Providers**.
+2. Select **Kimi Code** under **Configured Providers**.
+3. Click **Add Key** or edit an existing key.
+4. Paste the API key directly or use `env.KIMI_CODE_API_KEY`.
+5. Set **Allowed Models** to **All Models** or choose a model allowlist.
+6. Save the provider configuration.
+
+</Tab>
+<Tab title="config.json">
+
+```json
+{
+  "providers": {
+    "kimi-code": {
+      "keys": [
+        {
+          "name": "kimi-code-key-1",
+          "value": "env.KIMI_CODE_API_KEY",
+          "models": ["*"],
+          "weight": 1.0
+        }
+      ]
+    }
+  }
+}
+```
+
+</Tab>
+<Tab title="Go SDK">
+
+```go
+case schemas.KimiCode:
+    return []schemas.Key{{
+        Name:   "kimi-code-key-1",
+        Value:  *schemas.NewSecretVar("env.KIMI_CODE_API_KEY"),
+        Models: []string{"*"},
+        Weight: 1.0,
+    }}, nil
+```
+
+</Tab>
+</Tabs>
+
+## Endpoint
+
+Bifrost uses the Kimi Code endpoint:
+
+```text
+https://api.kimi.com/coding
+```
+
+The provider appends the standard OpenAI-compatible paths, including
+`/v1/models` and `/v1/chat/completions`.
+
+## Models
+
+Use the model identifiers returned by **List Models**. Kimi Code plans may make
+different coding models available to different accounts; the provider does not
+hard-code a model allowlist.
+
+## Tool Use and Streaming
+
+Kimi Code requests can use Bifrost's standard chat tool definitions and streamed
+tool-call deltas. Bifrost forwards supported OpenAI-compatible fields through
+the Chat Completions path.
+
+## Unsupported Features
+
+The following operations are rejected by Bifrost before an upstream request is
+made:
+
+- Count Tokens
+- Embeddings
+- Image Generation
+- Speech and Transcription
+- File and Batch operations

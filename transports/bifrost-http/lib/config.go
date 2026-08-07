@@ -6503,6 +6503,7 @@ func (c *Config) autoDetectProviders(ctx context.Context) {
 		schemas.OpenAI:    {"OPENAI_API_KEY", "OPENAI_KEY"},
 		schemas.Anthropic: {"ANTHROPIC_API_KEY", "ANTHROPIC_KEY"},
 		schemas.Mistral:   {"MISTRAL_API_KEY", "MISTRAL_KEY"},
+		schemas.KimiCode:  {"KIMI_CODE_API_KEY", "KIMI_API_KEY"},
 	}
 
 	detectedCount := 0

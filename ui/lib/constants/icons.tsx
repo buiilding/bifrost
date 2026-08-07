@@ -818,6 +818,16 @@ export const ProviderIcons = {
 			</svg>
 		);
 	},
+	"kimi-code": ({ size = "md", className = "" }: IconProps) => {
+		const resolvedSize = resolveSize(size);
+		return (
+			<svg width={resolvedSize} height={resolvedSize} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" className={className}>
+				<title>Kimi Code</title>
+				<circle cx="12" cy="12" r="11" fill="#111827" />
+				<path d="M7 6.5h2.5v4.1L13.2 6.5h3.1l-4.4 5 4.8 6H13.6l-4.1-5.1v5.1H7z" fill="white" />
+			</svg>
+		);
+	},
 } as const;
 
 // Routing Engine Icons

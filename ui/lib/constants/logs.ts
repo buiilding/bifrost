@@ -30,6 +30,7 @@ export const KnownProvidersNames = [
 	"fireworks",
 	"sarvam",
 	"wafer",
+	"kimi-code",
 ] as const;
 
 // Local Provider type derived from KNOWN_PROVIDERS constant
@@ -141,6 +142,7 @@ export const ProviderLabels: Record<ProviderName, string> = {
 	fireworks: "Fireworks AI",
 	sarvam: "Sarvam AI",
 	wafer: "Wafer",
+	"kimi-code": "Kimi Code",
 } as const;
 
 // Helper function to get provider label, supporting custom providers

@@ -22,6 +22,7 @@ ModelProvider:
     - deepseek
     - gemini
     - openrouter
+    - kimi-code
     - elevenlabs
     - huggingface
     - nebius
