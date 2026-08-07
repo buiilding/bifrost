@@ -406,6 +406,9 @@
         "openrouter": {
           "$ref": "#/$defs/provider"
         },
+        "kimi-code": {
+          "$ref": "#/$defs/provider"
+        },
         "sgl": {
           "$ref": "#/$defs/provider_with_sgl_config"
         },
